@@ -3,6 +3,7 @@ import { Canvas, useFrame } from '@react-three/fiber';
 import { Stars, Edges, Float } from '@react-three/drei';
 import useSound from 'use-sound';
 import * as THREE from 'three';
+import { Analytics } from '@vercel/analytics/react';
 
 // --- 1. KONFIGURASI ---
 const COLS_PER_SIDE = 8;
@@ -378,6 +379,7 @@ export default function App() {
 
         {explosions.map(exp => <Explosion key={exp.id} gridY={exp.y} />)}
       </Canvas>
+      <Analytics />
     </div>
   );
 }
