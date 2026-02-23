@@ -56,7 +56,6 @@ Gunakan **Virtual Controller** yang muncul secara otomatis di layar perangkat mo
 1. Clone repository:
    ```bash
    git clone [https://github.com/ReviDaerobi/tet3d-game.git](https://github.com/ReviDaerobi/tet3d-game.git)
-Install dependencies:
 
 2. Install dependencies:
 ```Bash
