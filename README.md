@@ -58,12 +58,12 @@ Gunakan **Virtual Controller** yang muncul secara otomatis di layar perangkat mo
    git clone [https://github.com/ReviDaerobi/tet3d-game.git](https://github.com/ReviDaerobi/tet3d-game.git)
 
 2. Install dependencies:
-```Bash
+```bash
 npm install
 
 3. Run development server:
 
-```Bash
+```bash
 npm run dev
 
 
