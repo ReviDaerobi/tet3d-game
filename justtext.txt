@@ -1,0 +1,372 @@
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { Canvas, useFrame } from '@react-three/fiber';
+import { Stars, Edges } from '@react-three/drei';
+import useSound from 'use-sound';
+import * as THREE from 'three';
+
+// --- KONFIGURASI SOUND ---
+const MOVE_SFX = '/sounds/move.mp3';
+const ROTATE_SFX = '/sounds/rotate.mp3'; 
+const CLEAR_SFX = '/sounds/clear.mp3';
+const DROP_SFX = '/sounds/drop.mp3';
+const GAMEOVER_SFX = '/sounds/gameover.mp3';
+
+const COLS_PER_SIDE = 8;
+const SIDES = 4;
+const TOTAL_COLS = COLS_PER_SIDE * SIDES; 
+const ROWS = 20;
+
+const TETROMINOES = [
+  { shape: [{x: -1, y: 0}, {x: 0, y: 0}, {x: 1, y: 0}, {x: 2, y: 0}], color: '#00f2ff' }, 
+  { shape: [{x: 0, y: 0}, {x: 1, y: 0}, {x: 0, y: 1}, {x: 1, y: 1}], color: '#ffef00' }, 
+  { shape: [{x: -1, y: 0}, {x: 0, y: 0}, {x: 1, y: 0}, {x: 0, y: 1}], color: '#a800ff' }, 
+  { shape: [{x: 0, y: 0}, {x: 1, y: 0}, {x: -1, y: 1}, {x: 0, y: 1}], color: '#00ff44' }, 
+  { shape: [{x: -1, y: 0}, {x: 0, y: 0}, {x: 0, y: 1}, {x: 1, y: 1}], color: '#ff0044' }, 
+  { shape: [{x: -1, y: 1}, {x: -1, y: 0}, {x: 0, y: 0}, {x: 1, y: 0}], color: '#0055ff' }, 
+  { shape: [{x: 1, y: 1}, {x: -1, y: 0}, {x: 0, y: 0}, {x: 1, y: 0}], color: '#ff8800' }  
+];
+
+// --- HELPERS ---
+const getRandomPiece = (side = 0) => {
+  const rand = TETROMINOES[Math.floor(Math.random() * TETROMINOES.length)];
+  return { 
+    x: (side * COLS_PER_SIDE) + Math.floor(COLS_PER_SIDE / 2), 
+    y: 18, 
+    shape: rand.shape, 
+    color: rand.color 
+  };
+};
+
+const createEmptyBoard = () => Array.from({ length: ROWS }, () => Array(TOTAL_COLS).fill(null));
+
+function get3DPosition(gridX, gridY) {
+  const y3D = gridY - ROWS / 2 + 0.5;
+  const side = Math.floor(gridX / COLS_PER_SIDE);
+  const localX = gridX % COLS_PER_SIDE;
+  const radius = 4.6; 
+  const offset = localX - (COLS_PER_SIDE / 2) + 0.5;
+  if (side === 0) return [offset, y3D, radius];
+  if (side === 1) return [radius, y3D, -offset];
+  if (side === 2) return [-offset, y3D, -radius];
+  if (side === 3) return [-radius, y3D, offset];
+  return [0, 0, 0];
+}
+
+// --- KOMPONEN 3D VISUAL ---
+function CameraRig({ side }) {
+  useFrame((state) => {
+    const angle = (side * Math.PI) / 2;
+    const radius = 28; 
+    state.camera.position.lerp(new THREE.Vector3(Math.sin(angle) * radius, 0, Math.cos(angle) * radius), 0.1);
+    state.camera.lookAt(0, 0, 0);
+  });
+  return null;
+}
+
+function Block({ gridX, gridY, color, opacity = 1 }) {
+  const [x, y, z] = get3DPosition(gridX, gridY);
+  return (
+    <mesh position={[x, y, z]}>
+      <boxGeometry args={[0.9, 0.9, 0.9]} />
+      <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.4} transparent opacity={opacity} />
+      <Edges scale={1.1} threshold={15} color="white" />
+    </mesh>
+  );
+}
+
+// FIXED EXPLOSION COMPONENT
+function Explosion({ gridY }) {
+    const groupRef = useRef();
+    
+    // Siapkan data partikel: posisi awal melingkar di pilar
+    const particles = useMemo(() => {
+        const temp = [];
+        for (let i = 0; i < TOTAL_COLS; i++) {
+            const angle = (i / TOTAL_COLS) * Math.PI * 2;
+            temp.push({
+                angle: angle,
+                speed: 10 + Math.random() * 10,
+                yOffset: (gridY - ROWS / 2) + 0.5
+            });
+        }
+        return temp;
+    }, [gridY]);
+
+    const startTime = useRef(null);
+
+    useFrame((state) => {
+        if (!groupRef.current) return;
+        if (startTime.current === null) startTime.current = state.clock.elapsedTime;
+        
+        const elapsed = state.clock.elapsedTime - startTime.current;
+
+        groupRef.current.children.forEach((mesh, i) => {
+            const p = particles[i];
+            const dist = 4.6 + (elapsed * p.speed); // Partikel menjauh dari pusat
+            mesh.position.x = Math.sin(p.angle) * dist;
+            mesh.position.z = Math.cos(p.angle) * dist;
+            mesh.position.y = p.yOffset + (elapsed * 2); // Naik dikit
+            mesh.scale.setScalar(Math.max(0, 1 - elapsed * 1.5)); // Mengecil
+        });
+    });
+
+    return (
+        <group ref={groupRef}>
+            {particles.map((_, i) => (
+                <mesh key={i}>
+                    <boxGeometry args={[0.4, 0.4, 0.4]} />
+                    <meshBasicMaterial color="white" />
+                </mesh>
+            ))}
+        </group>
+    );
+}
+
+function CentralPillar() {
+  return (
+    <mesh position={[0, 0, 0]}>
+      <boxGeometry args={[COLS_PER_SIDE, ROWS, COLS_PER_SIDE]} />
+      <meshStandardMaterial color="#0a0a0a" metalness={0.9} roughness={0.2} />
+      <Edges scale={1} threshold={15} color="#333" />
+    </mesh>
+  );
+}
+
+// --- MAIN APP ---
+export default function App() {
+  const [playMove] = useSound(MOVE_SFX, { volume: 0.3 });
+  const [playRotate] = useSound(ROTATE_SFX, { volume: 0.4 });
+  const [playClear] = useSound(CLEAR_SFX, { volume: 0.6 });
+  const [playDrop] = useSound(DROP_SFX, { volume: 0.4 });
+  const [playGameOver] = useSound(GAMEOVER_SFX, { volume: 0.7 });
+
+  const [gameState, setGameState] = useState({
+    board: createEmptyBoard(),
+    activePiece: getRandomPiece(0),
+    score: 0,
+    level: 1,
+    status: 'START',
+  });
+  const [cameraSide, setCameraSide] = useState(0);
+  const [explosions, setExplosions] = useState([]); 
+  const cameraSideRef = useRef(0);
+
+  useEffect(() => { cameraSideRef.current = cameraSide; }, [cameraSide]);
+
+  const checkCollision = useCallback((pieceX, pieceY, shape, board) => {
+    for (let block of shape) {
+      const absX = (pieceX + block.x + TOTAL_COLS) % TOTAL_COLS;
+      const absY = pieceY + block.y;
+      if (absY < 0) return true;
+      if (absY >= ROWS) continue; 
+      if (board[absY][absX] !== null) return true;
+    }
+    return false;
+  }, []);
+
+  const getGhostY = useCallback(() => {
+    const { x, y, shape } = gameState.activePiece;
+    let ghostY = y;
+    while (!checkCollision(x, ghostY - 1, shape, gameState.board)) {
+        ghostY--;
+    }
+    return ghostY;
+  }, [gameState.activePiece, gameState.board, checkCollision]);
+
+  const resetGame = () => {
+    setCameraSide(0);
+    setExplosions([]);
+    setGameState({
+      board: createEmptyBoard(),
+      activePiece: getRandomPiece(0),
+      score: 0,
+      level: 1,
+      status: 'PLAYING'
+    });
+  };
+
+  useEffect(() => {
+    if (gameState.status !== 'PLAYING') return;
+
+    const handleKeyDown = (e) => {
+      const key = e.key.toLowerCase();
+      if (key === 'a' || key === 'd') {
+        setCameraSide((s) => (key === 'a' ? (s - 1 + 4) % 4 : (s + 1) % 4));
+        playRotate(); 
+        return;
+      }
+
+      setGameState((prev) => {
+        let { x, y, shape, color } = prev.activePiece;
+        let newX = x; let newY = y; let newShape = shape;
+        let moved = false; let rotated = false;
+
+        if (e.key === 'ArrowLeft') { newX = (x - 1 + TOTAL_COLS) % TOTAL_COLS; moved = true; }
+        else if (e.key === 'ArrowRight') { newX = (x + 1) % TOTAL_COLS; moved = true; }
+        else if (e.key === 'ArrowDown') { newY = y - 1; moved = true; }
+        else if (e.key === 'ArrowUp') { newShape = shape.map(b => ({ x: -b.y, y: b.x })); rotated = true; }
+        else return prev;
+
+        if (checkCollision(newX, newY, newShape, prev.board)) return prev;
+        if (rotated) playRotate(); else if (moved) playMove();
+
+        return { ...prev, activePiece: { x: newX, y: newY, shape: newShape, color } };
+      });
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [gameState.status, checkCollision, playMove, playRotate]);
+
+  useEffect(() => {
+    if (gameState.status !== 'PLAYING') return;
+    const speed = Math.max(100, 800 - (gameState.level - 1) * 100);
+
+    const dropInterval = setInterval(() => {
+      setGameState((prev) => {
+        const { x, y, shape, color } = prev.activePiece;
+        const nextY = y - 1;
+        
+        if (checkCollision(x, nextY, shape, prev.board)) {
+          if (y >= 18) { playGameOver(); return { ...prev, status: 'GAMEOVER' }; }
+          playDrop();
+
+          let newBoard = prev.board.map(row => [...row]);
+          shape.forEach(block => {
+            const absX = (x + block.x + TOTAL_COLS) % TOTAL_COLS;
+            const absY = y + block.y;
+            if (absY >= 0 && absY < ROWS) newBoard[absY][absX] = color;
+          });
+          
+          let linesCleared = 0;
+          let clearedYPositions = [];
+          const filteredBoard = newBoard.filter((row, index) => {
+            const isRowFull = row.every(cell => cell !== null);
+            if (isRowFull) { 
+                linesCleared++; 
+                clearedYPositions.push(index); 
+                return false; 
+            }
+            return true;
+          });
+
+          if (linesCleared > 0) {
+             playClear();
+             // Spawn ledakan di setiap baris yang hancur
+             const newExps = clearedYPositions.map(posY => ({ id: Math.random(), y: posY }));
+             setExplosions(old => [...old, ...newExps]);
+             setTimeout(() => {
+                 setExplosions(old => old.filter(e => !newExps.includes(e)));
+             }, 1000);
+          }
+
+          while (filteredBoard.length < ROWS) filteredBoard.push(Array(TOTAL_COLS).fill(null));
+          const addedScore = [0, 100, 300, 500, 800][linesCleared] || 0;
+          const newScore = prev.score + addedScore;
+          
+          return { 
+            ...prev, board: filteredBoard, activePiece: getRandomPiece(cameraSideRef.current),
+            score: newScore, level: Math.floor(newScore / 500) + 1
+          };
+        }
+        return { ...prev, activePiece: { ...prev.activePiece, y: nextY } };
+      });
+    }, speed); 
+
+    return () => clearInterval(dropInterval);
+  }, [gameState.status, gameState.level, checkCollision, playDrop, playClear, playGameOver]);
+
+  const ghostY = gameState.status === 'PLAYING' ? getGhostY() : 0;
+
+  return (
+    <div className="w-screen h-screen bg-black overflow-hidden font-sans select-none text-white text-center">
+      {/* UI OVERLAY */}
+      <div className="absolute inset-0 z-20 pointer-events-none flex flex-col justify-between p-10">
+        <div className="flex justify-between items-start pointer-events-auto text-left">
+          <div>
+            <h1 className="text-white font-black text-6xl tracking-tighter italic drop-shadow-[0_0_15px_rgba(0,242,255,0.8)] leading-none">TETRIS <span className="text-cyan-400 text-4xl">3D</span></h1>
+            <p className="text-cyan-900 font-bold tracking-[0.3em] text-[10px] mt-2 uppercase">Ngawi Silicon Valley</p>
+          </div>
+          <div className="flex gap-4">
+            <div className="bg-cyan-500/10 backdrop-blur-xl border border-cyan-500/20 p-6 rounded-3xl text-right min-w-[120px]">
+              <p className="text-cyan-400 text-[10px] uppercase font-black mb-1 tracking-widest text-right">Level</p>
+              <p className="text-white text-4xl font-mono font-black leading-none">{gameState.level}</p>
+            </div>
+            <div className="bg-white/5 backdrop-blur-xl border border-white/10 p-6 rounded-3xl text-right min-w-[180px]">
+              <p className="text-white/30 text-[10px] uppercase font-black mb-1 tracking-widest text-right">Score</p>
+              <p className="text-white text-5xl font-mono font-black leading-none">{gameState.score}</p>
+            </div>
+          </div>
+        </div>
+        
+        <div className="flex justify-between items-end pointer-events-auto">
+          <div className="bg-black/60 backdrop-blur-md border border-white/10 p-5 rounded-2xl text-left">
+            <p className="text-cyan-400 text-[10px] uppercase font-black mb-3 tracking-widest">Systems Active</p>
+            <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-[11px] font-bold">
+              <div className="text-white/40 italic">CAM ROTATION</div> <div className="text-white text-right font-mono">A / D</div>
+              <div className="text-white/40 italic">PIECE CONTROL</div> <div className="text-white text-right font-mono">← ↑ → ↓</div>
+            </div>
+          </div>
+          {gameState.level <= 2 && gameState.status === 'PLAYING' && (
+            <div className="text-right text-cyan-400/50 text-[10px] font-mono tracking-widest animate-pulse">GHOST ASSIST: ONLINE</div>
+          )}
+        </div>
+      </div>
+
+      {/* MENUS */}
+      {gameState.status !== 'PLAYING' && (
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/90 backdrop-blur-xl">
+          <div className="text-center p-14 bg-gradient-to-b from-white/5 to-transparent border border-white/10 rounded-[4rem] shadow-2xl max-w-sm w-full">
+            {gameState.status === 'START' ? (
+              <>
+                <div className="w-24 h-24 bg-cyan-500 rounded-[2rem] mx-auto mb-8 rotate-12 shadow-[0_0_50px_rgba(6,182,212,0.4)] flex items-center justify-center border-4 border-white/20"><div className="w-10 h-10 bg-black rounded-lg animate-pulse" /></div>
+                <h2 className="text-white text-4xl font-black mb-2 uppercase tracking-tight">Cylindrical<br/>Tetris</h2>
+                <button onClick={() => setGameState({...gameState, status: 'PLAYING'})} className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-black py-5 rounded-3xl transition-all shadow-[0_10px_20px_rgba(6,182,212,0.3)] mt-6">INITIALIZE</button>
+              </>
+            ) : (
+              <>
+                <h2 className="text-red-600 text-6xl font-black mb-4 italic tracking-tighter">FAILURE</h2>
+                <p className="text-white text-8xl font-mono font-black mb-10 leading-none">{gameState.score}</p>
+                <button onClick={resetGame} className="w-full bg-white hover:bg-cyan-50 text-black font-black py-5 rounded-3xl transition-all">REBOOT ENGINE</button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* SCENE */}
+      <Canvas shadows camera={{ position: [0, 0, 28], fov: 50 }}>
+        <color attach="background" args={['#000']} />
+        <Stars radius={100} depth={50} count={4000} factor={6} saturation={0} fade speed={1.5} />
+        <ambientLight intensity={0.4} />
+        <pointLight position={[15, 15, 15]} intensity={2.5} color="#00f2ff" />
+        <pointLight position={[-15, 10, -15]} intensity={1.5} color="#ff0044" />
+        
+        <CentralPillar />
+        <CameraRig side={cameraSide} />
+        
+        {/* Render Board */}
+        {gameState.board.map((row, y) => row.map((color, x) => color && <Block key={`b-${x}-${y}`} gridX={x} gridY={y} color={color} />))}
+
+        {/* Active Piece */}
+        {gameState.status === 'PLAYING' && gameState.activePiece.shape.map((block, i) => {
+          const absX = (gameState.activePiece.x + block.x + TOTAL_COLS) % TOTAL_COLS;
+          const absY = gameState.activePiece.y + block.y;
+          return <Block key={`a-${i}`} gridX={absX} gridY={absY} color={gameState.activePiece.color} />;
+        })}
+
+        {/* Ghost Piece Assistance (Level 1-2 only) */}
+        {gameState.status === 'PLAYING' && gameState.level <= 2 && gameState.activePiece.shape.map((block, i) => {
+            const absX = (gameState.activePiece.x + block.x + TOTAL_COLS) % TOTAL_COLS;
+            const absY = ghostY + block.y;
+            if (absY === gameState.activePiece.y + block.y) return null;
+            return <Block key={`g-${i}`} gridX={absX} gridY={absY} color={gameState.activePiece.color} opacity={0.15} />;
+        })}
+
+        {/* Particles Explosion */}
+        {explosions.map(exp => (
+            <Explosion key={exp.id} gridY={exp.y} />
+        ))}
+      </Canvas>
+    </div>
+  );
+}
