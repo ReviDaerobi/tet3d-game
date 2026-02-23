@@ -67,7 +67,7 @@ Gunakan **Virtual Controller** yang muncul secara otomatis di layar perangkat mo
    npm run dev
 
 
-##🏗️ Deployment
+## 🏗️ Deployment
 Proyek ini siap dideploy ke Vercel dengan satu klik. Pastikan build command diatur ke npm run build dan output directory ke dist. silahkan kembangkan :D
 
 # Crafted with ❤️ by Revi Daerobi 
